@@ -11,3 +11,6 @@ bevy_reflect = "0.16"
 bevy_log = "0.16"
 bevy_platform = "0.16"
 bevy_ptr = "0.16"
+
+[dev-dependencies]
+bevy = "0.16"

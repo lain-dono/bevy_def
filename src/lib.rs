@@ -22,6 +22,13 @@ use std::{
     mem::needs_drop,
 };
 
+mod debug;
+mod entity_mut;
+mod entity_ref;
+
+pub use self::entity_mut::DefEntityMut;
+pub use self::entity_ref::DefEntityRef;
+
 pub unsafe trait DefComponent: Send + Sync + 'static {
     /// Asset attached to a component.
     type Asset: Asset;
@@ -60,6 +67,16 @@ pub unsafe trait DefComponent: Send + Sync + 'static {
     // TODO: map_entities, maybe ComponentCloneBehavior
 }
 
+pub struct DefRef<'value, 'asset, T: DefComponent> {
+    pub value: &'value T,
+    pub asset: &'asset T::Asset,
+}
+
+pub struct DefMut<'value, 'asset, T: DefComponent> {
+    pub value: Mut<'value, T>,
+    pub asset: &'asset T::Asset,
+}
+
 pub struct DefPlugin<T: DefComponent>(PhantomData<fn() -> T>);
 
 impl<T: DefComponent> Default for DefPlugin<T> {
@@ -73,6 +90,18 @@ impl<T: DefComponent> Plugin for DefPlugin<T> {
         app.init_resource::<DefIndex<T>>();
         app.init_asset::<T::Asset>();
         app.add_systems(PostUpdate, def_maintain_system::<T>.after(AssetEvents));
+
+        let world = app.world_mut();
+        let index_id = world.resource_id::<DefIndex<T>>().unwrap();
+        let asset_id = world.resource_id::<Assets<T::Asset>>().unwrap();
+
+        let mut index = world.resource_mut::<DefIndex<T>>();
+
+        index.access_ref.add_resource_read(index_id);
+        index.access_ref.add_resource_read(asset_id);
+
+        index.access_mut.add_resource_read(index_id);
+        index.access_mut.add_resource_read(asset_id);
     }
 }
 
@@ -248,8 +277,8 @@ impl<T: DefComponent> DefIndex<T> {
 
 #[derive(SystemParam)]
 pub struct DefParam<'w, T: DefComponent> {
-    asset: Res<'w, Assets<<T as DefComponent>::Asset>>,
-    index: Res<'w, DefIndex<T>>,
+    pub asset: Res<'w, Assets<<T as DefComponent>::Asset>>,
+    pub index: Res<'w, DefIndex<T>>,
 }
 
 impl<'w, T: DefComponent> DefParam<'w, T> {
@@ -264,19 +293,19 @@ impl<'w, T: DefComponent> DefParam<'w, T> {
         &self,
         entity: &'a FilteredEntityRef<'w>,
         id: impl Into<AssetId<T::Asset>>,
-    ) -> Option<(&'a T, &'_ T::Asset)> {
+    ) -> Option<DefRef<'a, '_, T>> {
         let (component_id, asset) = self.asset(id)?;
-        let ptr = entity.get_by_id(component_id)?;
-        Some((unsafe { ptr.deref() }, asset))
+        let value = unsafe { entity.get_by_id(component_id)?.deref() };
+        Some(DefRef { value, asset })
     }
 
     pub fn filtered_entity_mut<'a>(
         &self,
         entity: &'a mut FilteredEntityMut<'w>,
         id: impl Into<AssetId<T::Asset>>,
-    ) -> Option<(Mut<'a, T>, &'_ T::Asset)> {
+    ) -> Option<DefMut<'a, '_, T>> {
         let (component_id, asset) = self.asset(id)?;
-        let ptr = entity.get_mut_by_id(component_id)?;
-        Some((unsafe { ptr.with_type::<T>() }, asset))
+        let value = unsafe { entity.get_mut_by_id(component_id)?.with_type::<T>() };
+        Some(DefMut { value, asset })
     }
 }
