@@ -1,4 +1,4 @@
-use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, platform::collections::HashMap, prelude::*};
+use bevy::{app::ScheduleRunnerPlugin, asset::weak_handle, log::LogPlugin, prelude::*};
 
 use bevy_def::*;
 use std::time::Duration;
@@ -13,57 +13,110 @@ fn main() {
         DefPlugin::<Stat>::default(),
     ));
 
-    app.init_resource::<Stats>();
+    app.init_resource::<Status>();
 
     app.add_systems(Startup, startup);
-    app.add_systems(Update, spawn);
-    app.add_systems(Update, show);
+    app.add_systems(Update, (show, spawn, increment_health));
 
     app.run();
 }
 
 #[derive(Resource, Default)]
-struct Stats {
-    all: Vec<Handle<StatAsset>>,
-    spawned: HashMap<AssetId<StatAsset>, Entity>,
+struct Status {
+    spawned: bool,
+    handle: Option<Handle<StatAsset>>,
 }
 
-fn startup(mut stat_assets: ResMut<Assets<StatAsset>>, mut stats: ResMut<Stats>) {
+#[derive(Component)]
+struct MarkerComponent;
+
+const HEALTH: Handle<StatAsset> = weak_handle!("aa0c572f-1ebb-4f8b-b5c6-cfd8651799f2");
+
+fn startup(mut stat_assets: ResMut<Assets<StatAsset>>, mut status: ResMut<Status>) {
     info!("startup");
 
-    stats.all.push(stat_assets.add(StatAsset {
-        defname: String::from("health"),
-        default: 0.35,
-        minimal: 0.01,
-        maximal: 0.50,
-    }));
+    stat_assets.insert(
+        &HEALTH,
+        StatAsset {
+            defname: String::from("health"),
+            default: 35.0,
+            minimal: 0.0,
+            maximal: 100.0,
+        },
+    );
+
+    let handle = stat_assets.add(StatAsset {
+        defname: String::from("mana"),
+        default: 0.7,
+        minimal: 0.0,
+        maximal: 0.9,
+    });
+
+    status.handle = Some(handle);
 }
 
-fn spawn(mut commands: Commands, mut stats: ResMut<Stats>, index: Res<DefIndex<Stat>>) {
+fn spawn(mut commands: Commands, mut status: ResMut<Status>, index: Res<DefIndex<Stat>>) {
     info!("spawn");
-    let stats: &mut Stats = &mut stats;
 
-    for handle in &stats.all {
-        if !stats.spawned.contains_key(&handle.id()) {
-            if let Some((asset_id, component_id)) = index.find_by_name("health") {
-                let mut entity = commands.spawn_empty();
-                entity.queue(InsertDef::new(component_id, Stat { current: 5.0 }));
-                stats.spawned.insert(asset_id, entity.id());
+    if !status.spawned {
+        let Some(health_id) = index.asset_to_id().get(&HEALTH.id()).copied() else {
+            return;
+        };
+
+        let Some(mana_id) = index.find_by_name("mana").map(|(_, id)| id) else {
+            return;
+        };
+
+        commands.spawn(MarkerComponent);
+
+        commands
+            .spawn(MarkerComponent)
+            .queue(InsertDef::new(health_id, Stat { current: 35.0 }));
+
+        commands
+            .spawn(MarkerComponent)
+            .queue(InsertDef::new(mana_id, Stat { current: 15.0 }));
+
+        commands
+            .spawn(MarkerComponent)
+            .queue(InsertDef::new(health_id, Stat { current: 35.0 }))
+            .queue(InsertDef::new(mana_id, Stat { current: 15.0 }));
+
+        status.spawned = true;
+    }
+}
+
+fn show(query: Query<(NameOrEntity, DefEntityRef<Stat>), With<MarkerComponent>>) {
+    for (print, item) in query {
+        let hp = item.get_ref(&HEALTH);
+        let mp = item.find_ref("mana");
+
+        if hp.is_none() && mp.is_none() {
+            info!("{print} no hp, no mp");
+        } else {
+            if let Some(hp) = hp {
+                info!(
+                    "{print} hp: {} [{} .. {}]",
+                    hp.value.current, hp.asset.minimal, hp.asset.maximal
+                );
+            }
+
+            if let Some(mp) = mp {
+                info!(
+                    "{print} mp: {} [{} .. {}]",
+                    mp.value.current, mp.asset.minimal, mp.asset.maximal
+                );
             }
         }
     }
 }
 
-fn show(query: Query<DefEntityRef<Stat>>) {
-    info!("show");
-
-    for item in query {
-        let health = item.find_ref("health").unwrap();
-
-        info!(
-            "{}: {} [{} .. {}]",
-            health.asset.defname, health.value.current, health.asset.minimal, health.asset.maximal
-        );
+fn increment_health(query: Query<DefEntityMut<Stat>, With<MarkerComponent>>) {
+    for mut stats in query {
+        if let Some(mut hp) = stats.get_mut(&HEALTH) {
+            hp.value.current += 0.2;
+            hp.value.current = hp.value.current.clamp(hp.asset.minimal, hp.asset.maximal);
+        }
     }
 }
 

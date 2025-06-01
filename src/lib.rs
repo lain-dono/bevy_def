@@ -29,6 +29,11 @@ mod entity_ref;
 pub use self::entity_mut::DefEntityMut;
 pub use self::entity_ref::DefEntityRef;
 
+pub struct DefQueryState {
+    index_id: ComponentId,
+    asset_id: ComponentId,
+}
+
 pub unsafe trait DefComponent: Send + Sync + 'static {
     /// Asset attached to a component.
     type Asset: Asset;
